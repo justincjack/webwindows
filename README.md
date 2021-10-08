@@ -1,6 +1,8 @@
 # webwindows
 JavaScript desktop window management system.
 
+***Would like contributors for the betterment of Web Applications! ( Names in credits, yay!) I'm actively using, building, and maintaining this in several large-scale projects, but obviously can't cover as much ground alone as I could with help.  If you're interested in using this system and helping make it phenomenal, please dive in!***
+
 A desktop window manager for windowed web applications.
 
 As of this writing, this system/API was designed for and tested with Google Chrome >= Version 93.  Other developers are encouraged to help make this system more cross-browser compatible!
