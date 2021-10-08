@@ -1,6 +1,7 @@
 # webwindows
 JavaScript desktop window management system.
 
+**Chrome Only as of now!**
 [Working example click here](https://justinjack.com/windows.html)
 
 ***Would like contributors for the betterment of Web Applications! ( Names in credits, yay!) I'm actively using, building, and maintaining this in several large-scale projects, but obviously can't cover as much ground alone as I could with help.  If you're interested in using this system and helping make it phenomenal, please dive in!***
