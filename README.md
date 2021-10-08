@@ -23,9 +23,18 @@ Significant documentation will be coming soon.
             function start() {
                 win = new WINDOW("0", "0", "50%", "50%", "Window 1");
                 win.show();
+                
+                // Set the window's icon.  For the best results, it should be 32x32 or 64x64.
+                // win.icon = "https://some_icon.png";
 
                 win2 = new WINDOW("50%", "0", "50%", "50%", "Window 2");
                 win2.show();
+                
+                win2.contents = "<span class='myclass'>An HTML string</span>";
+                
+                let myspan = win2.get_single_element("span", "myclass");
+                
+                myspan.style.textDecoration = "underline";
 
                 win3 = new WINDOW("0", "50%", "50%", "50%", "Window 3");
                 win3.show();
@@ -58,4 +67,6 @@ Significant documentation will be coming soon.
 ```
 
 
+- Double click a minimized/docked window to restore it.
+- Drag a docked window to "unmanage" it.  That means it will minimize/restore where it is dropped.
 
