@@ -146,6 +146,10 @@ const WINDOW_STATE_ANIMATING    = 2;
 const WINDOW_STATE_INVISIBLE    = 3;
 const WINDOW_STATE_INVALID      = 4;
 
+const WM_STATE_MANAGED          = 0x00;
+const WM_STATE_UNMANAGED        = 0x01;
+
+
 const _win_active_color_    = "#6083eb";
 const _win_inactive_color_  = "#8ea1ad";
 
@@ -819,7 +823,8 @@ class WINDOW {
     static #nmin_slots_per_row  = 0;            /* The number of minimized tiles that fit in each row */
     static #min_tile_width      = 0;            /* The width in pixels of each minimized tile */
     static #nmin_row_count      = 0;            /* The number of ROWS of minimized tiles */
-    
+    static #mintimer            = 0;
+
     /*--------------------  Class Instance Variables  --------------------*/
     #shadow_color               = new COLOR_VALUE("black");
     position                    = {};
@@ -843,6 +848,7 @@ class WINDOW {
     #native_button_count        = 2;
     #content_size_relative      = false;
     #draggable                  = true;
+    #management_state           = WM_STATE_MANAGED;
 
     static event_in_window( e ) {
         let el = e.target;
@@ -862,6 +868,7 @@ class WINDOW {
         }
         return false;
     }
+
 
     static get has_focus() {
         return WINDOW.#wnd_with_focus;
@@ -937,24 +944,50 @@ class WINDOW {
             WINDOW.mouseX = e.clientX;
             WINDOW.mouseY = e.clientY;
             for (const id in WINDOW.#window_list) {
-                if (WINDOW.#window_list[id].is_dragging) {
+                let mmw = WINDOW.#window_list[id];
+                let ms  = mmw.get_management_state();
+
+                if (mmw.is_dragging) {
                     if (e.buttons !== 1) {
-                        WINDOW.#window_list[id].stop_drag();
+                        mmw.stop_drag();
                         continue;
                     }
-                    if ( (WINDOW.#window_list[id].top - (WINDOW.#window_list[id].dragY - WINDOW.mouseY)) <= 0 ) {
+
+                    /* Stop drag before it goes off screen */
+                    if ( (mmw.top - (mmw.dragY - WINDOW.mouseY)) <= 0 ) {
                         continue;
                     }
-                    /* If the window is minimized, mark it as having been drug */
-                    if (WINDOW.#window_list[id].state === WINDOW_STATE_MINIMIZED) {
-                        WINDOW.#window_list[id].min_drag_flag = true;
+
+                    /**
+                     * If the window is minimized and docked, make sure the user means
+                     * to remove it from the dock.  If so, set it as unmanaged.
+                     */
+                    if (mmw.state === WINDOW_STATE_MINIMIZED &&
+                        ms === WM_STATE_MANAGED)
+                    {
+                        if (Math.abs(Math.sqrt(Math.pow((WINDOW.mouseX - mmw.dragX), 2) + Math.pow((WINDOW.mouseY - mmw.dragY), 2))) < 5) {
+                            return;
+                        }
+                        mmw.set_management_state(WM_STATE_UNMANAGED);
+                        ms = WM_STATE_UNMANAGED;
                     }
-                    WINDOW.#window_list[id].left -= WINDOW.#window_list[id].dragX - WINDOW.mouseX;
-                    WINDOW.#window_list[id].top  -= WINDOW.#window_list[id].dragY - WINDOW.mouseY;
-                    WINDOW.#window_list[id].window.style.left = (WINDOW.#window_list[id].left).toString() + "px";
-                    WINDOW.#window_list[id].window.style.top  = (WINDOW.#window_list[id].top).toString()  + "px";
-                    WINDOW.#window_list[id].dragX = WINDOW.mouseX;
-                    WINDOW.#window_list[id].dragY = WINDOW.mouseY;
+
+                    mmw.left -= (mmw.dragX - WINDOW.mouseX);
+                    mmw.top  -= (mmw.dragY - WINDOW.mouseY);
+
+                    /**
+                     * Unmanaged window's "minimized" positioning should always be the
+                     * same as the windows top-left corner.
+                     */
+                    if ( ms === WM_STATE_UNMANAGED) {
+                        mmw.set_minimize_pos(mmw.left, mmw.top, false);
+                        mmw.set_window_pos(mmw.left, mmw.top, false);
+
+                    }
+                    mmw.window.style.left = (mmw.left).toString() + "px";
+                    mmw.window.style.top  = (mmw.top).toString()  + "px";
+                    mmw.dragX = WINDOW.mouseX;
+                    mmw.dragY = WINDOW.mouseY;
                 }
             }
         });
@@ -1030,6 +1063,7 @@ class WINDOW {
         let window_array    = [];
         let inserted        = false;
         let i               = 0;
+        let w               = null;
         let changes         = [];
 
         /**
@@ -1074,14 +1108,34 @@ class WINDOW {
             window_array.push(wnd);
         }
 
+        
+        // for (   i = 0; 
+        //         i < window_array.length &&
+        //         (window_array[i].state !== WINDOW_STATE_NORMAL &&
+        //         window_array[i].get_management_state() === WM_STATE_MANAGED);
+        //         i++)
+        // {
+        //     newmap[window_array[i].index] = window_array[i];
+        //     changes.push(window_array[i]);
+        // }
+
         for (   i = 0; 
-                i < window_array.length &&
-                window_array[i].state !== WINDOW_STATE_NORMAL;
+                i < window_array.length;
                 i++)
         {
-            newmap[window_array[i].index] = window_array[i];
+            w = window_array[i];
+            if (w.state === WINDOW_STATE_NORMAL ||
+                (w.state === WINDOW_STATE_MINIMIZED &&
+                w.get_management_state() === WM_STATE_UNMANAGED))
+            {
+                continue;
+            }
+
+            newmap[w.index] = w;
             changes.push(window_array[i]);
         }
+
+
         WINDOW.#nmin_row_count  = Math.ceil( changes.length / WINDOW.#nmin_slots_per_row);
         WINDOW.#minimize_map = newmap;
         changes.forEach((w)=>{
@@ -1543,13 +1597,21 @@ class WINDOW {
         return this.#content;
     }
 
-    //30
     get draggable() {
-
+        return this.#draggable;
     }
 
     set draggable( boolval ) {
+        if ( typeof boolval !== 'boolean') {
+            return;
+        }
 
+        if (this.window_being_dragged === true &&
+            boolval === false)
+        {
+            this.window_being_dragged = false;
+        }
+        this.#draggable = boolval;
     }
 
     /**
@@ -1634,6 +1696,106 @@ class WINDOW {
 
     /*************************************  Window Methods  ***************************************/
 
+    get_management_state() {
+        return this.#management_state;
+    }
+
+    /**
+     * Whether or not the window should be subject to the window
+     * management system's auto-positioning.  If a minimized window
+     * is dragged from its assigned spot, this will be called to
+     * remove it from postion management.
+     * 
+     * 
+     * @param {number} wm_state 
+     * Either WM_STATE_UNMANAGED or WM_STATE_MANAGED
+     * 
+     * @returns {boolean}
+     * TRUE on success, FALSE otherwise
+     */
+    set_management_state( wm_state ) {
+        if (wm_state === this.#management_state) {
+            return true;
+        }
+
+        if (wm_state === WM_STATE_UNMANAGED) {  /* Set the state to UN-managed */
+            /**
+             * Take the window off of position management.
+             * 
+             * If the window is not minimized, just make sure that when it IS
+             * minimized, that if there's no minimize info saved, we shrink it
+             * where it is.
+             * 
+             * If it IS minimized, we tell the window position management system
+             * to rearrange the minimized windows.
+             * 
+             */
+            this.min_drag_flag = true;
+            this.#management_state = wm_state;
+
+            if (this.state === WINDOW_STATE_MINIMIZED) {
+                this.#clear_minimize_information();
+                delete WINDOW.#minimize_map[this.index];
+                WINDOW.#nmin_row_count  = Math.ceil( Object.keys(WINDOW.#minimize_map).length / WINDOW.#nmin_slots_per_row);
+                WINDOW.set_focus(this);
+                WINDOW.#minimized_count--;
+            }
+        } else if ( wm_state === WM_STATE_MANAGED) {
+            this.min_drag_flag = false;
+            /**
+             * Making the window's minimized position managed.
+             * 
+             * If the window's minimized, put it in its proper place.
+             * If not, just get it ready so it will be placed properly
+             * on minimize.
+             * 
+             */
+            this.#management_state = wm_state;
+
+            if (this.state === WINDOW_STATE_MINIMIZED) {
+                /* First, get our restore position */
+                this.#clear_minimize_information();
+        
+                let idx = WINDOW.map_minimized_window(this);
+        
+                WINDOW.#nmin_row_count  = Math.ceil( idx / WINDOW.#nmin_slots_per_row);
+        
+                this.minimize_position_set(idx);
+                if (this.minimize_information.info_valid === false) {
+                    return;
+                }
+        
+                this.window.style.resize        = "none";
+                this.window.style.transition    = "all 250ms linear";
+                let crect = this.window.getBoundingClientRect();
+                this.window.style.left = crect.left + "px";
+                this.window.style.top = crect.top + "px";
+                this.state                              = WINDOW_STATE_ANIMATING;
+                setTimeout(()=>{
+                    this.close_button.style.display     = "none";
+                    this.minimize_button.style.display  = "none";
+                    this.#content.style.display         = "none";
+                    this.#minimized_content.style.display
+                                                        = "block";
+        
+                    this.window.style.width             = this.minimize_information.min_width.toString() + "px";
+                    this.window.style.height            = this.minimize_information.min_height.toString() + "px";
+                    this.window.style.left              = this.minimize_information.x.toString() + "px";
+                    this.window.style.top               = this.minimize_information.y.toString() + "px";
+                }, 50);
+
+                setTimeout(()=>{
+                    this.state = WINDOW_STATE_MINIMIZED;
+                    this.window.style.transition    = "none";
+                    WINDOW.#minimized_count++;
+                    WINDOW.window_set_index(this, idx);
+                }, 250);
+            }
+        } else {
+            return false;
+        }
+        return true;
+    }
 
     adjust_height_for_contents() {
         let cheight     = 0;
@@ -1751,7 +1913,7 @@ class WINDOW {
      * It's called whenever:
      *  A.  THIS window is minimized.
      *  B.  The viewport size is adjusted.
-     *  C.  ANY window is restored.
+     *  C.  ANY managed window is restored.
      * 
      */
     minimize_position_set( new_index = null ) {
@@ -1790,6 +1952,10 @@ class WINDOW {
 
         let action_reqd = false;
 
+        /**
+         * Check to see if the calculated minimized position of this window is
+         * the same as it was last time it was calculated and positioned.
+         */
         for (const prop in min_info) {
             if (this.minimize_information.hasOwnProperty(prop)) {
                 if (this.minimize_information[prop] !== min_info[prop]) {
@@ -1818,23 +1984,45 @@ class WINDOW {
             this.window.style.transition    = "none";
         }, 250);
 
-
         return min_info;
     }
 
     #clear_minimize_information() {
-        this.minimize_information = {
-            info_valid:         false,
-            slot:               0,
-            min_width:          0,
-            min_height:         0,
-            ignore_due_to_drag: false,
-            row:                0,
-            x:                  0,
-            y:                  0,
-            last_viewport_cx:   0,
-            last_viewport_cy:   0
-        };
+        if ( this.#management_state === WM_STATE_MANAGED ) {
+            this.minimize_information = {
+                info_valid:         false,
+                slot:               0,
+                min_width:          0,
+                min_height:         0,
+                ignore_due_to_drag: false,
+                row:                0,
+                x:                  0,
+                y:                  0,
+                last_viewport_cx:   0,
+                last_viewport_cy:   0
+            };
+        } else {
+            let header_rect = this.header_holder.getBoundingClientRect();
+            let wheight     = window.innerHeight;
+            let mw_height   = (header_rect.height * 2);
+
+            this.minimize_information.ignore_due_to_drag    = true;
+            this.minimize_information.info_valid            = true;
+            this.minimize_information.slot                  = 0;
+            this.minimize_information.row                   = 0;
+            this.minimize_information.rowcount              = 0;
+
+            if (this.minimize_information.min_width === 0) {
+                this.minimize_information.min_width             = WINDOW.#min_tile_width;
+            }
+
+            if (this.minimize_information.min_height === 0 ) {
+                this.minimize_information.min_height            = mw_height;
+            }
+
+            this.minimize_information.last_viewport_cx      = window.innerWidth;
+            this.minimize_information.last_viewport_cy      = wheight;
+        }
     }
 
     #update_window_colors() {
@@ -1843,6 +2031,55 @@ class WINDOW {
         } else {
             this.header.style.backgroundColor = this.titlecolor_inactive;
         }
+    }
+
+    #minimize_unmanaged() {
+        if (this.state === WINDOW_STATE_INVALID &&
+            this.state !== WINDOW_STATE_MINIMIZED)
+        {
+            return;
+        }
+
+        /* First, get our restore position */
+        let crect = this.window.getBoundingClientRect();
+
+        this.restore_position.top = crect.top;
+        this.restore_position.y = crect.top;
+        this.restore_position.left = crect.left;
+        this.restore_position.x = crect.left;
+        this.restore_position.width = crect.width;
+        this.restore_position.height = crect.height;
+
+
+        this.#clear_minimize_information();
+
+        this.window.style.resize        = "none";
+        this.window.style.transition    = "all 250ms linear";
+        this.window.style.left = this.restore_position.left + "px";
+        this.window.style.top = this.restore_position.top + "px";
+        WINDOW.lost_focus(this);
+        
+        this.state                              = WINDOW_STATE_ANIMATING;
+        setTimeout(()=>{
+            this.close_button.style.display     = "none";
+            this.minimize_button.style.display  = "none";
+            this.#content.style.display         = "none";
+            this.#minimized_content.style.display
+                                                = "block";
+
+            this.window.style.width             = this.minimize_information.min_width.toString() + "px";
+            this.window.style.height            = this.minimize_information.min_height.toString() + "px";
+            this.window.style.left              = this.minimize_information.x.toString() + "px";
+            this.window.style.top               = this.minimize_information.y.toString() + "px";
+        }, 50);
+        setTimeout(()=>{
+            this.state = WINDOW_STATE_MINIMIZED;
+            this.window.style.transition    = "none";
+            if (this.#onminimize) {
+                this.#onminimize(this);
+            }
+        }, 250);
+        return true;
     }
 
     /**
@@ -1864,9 +2101,21 @@ class WINDOW {
         {
             return;
         }
+
+        if (this.#management_state === WM_STATE_UNMANAGED) {
+            return this.#minimize_unmanaged();
+        }
+
         /* First, get our restore position */
         this.#clear_minimize_information();
-        this.restore_position = this.window.getBoundingClientRect();
+        let crect = this.window.getBoundingClientRect();
+
+        this.restore_position.top = crect.top;
+        this.restore_position.y = crect.top;
+        this.restore_position.left = crect.left;
+        this.restore_position.x = crect.left;
+        this.restore_position.width = crect.width;
+        this.restore_position.height = crect.height;
 
         let idx = WINDOW.map_minimized_window(this);
 
@@ -1883,9 +2132,9 @@ class WINDOW {
         this.window.style.left = this.restore_position.left + "px";
         this.window.style.top = this.restore_position.top + "px";
         WINDOW.lost_focus(this);
-
         
         this.state                              = WINDOW_STATE_ANIMATING;
+
         setTimeout(()=>{
             this.close_button.style.display     = "none";
             this.minimize_button.style.display  = "none";
@@ -1898,6 +2147,7 @@ class WINDOW {
             this.window.style.left              = this.minimize_information.x.toString() + "px";
             this.window.style.top               = this.minimize_information.y.toString() + "px";
         }, 50);
+
         setTimeout(()=>{
             let nextwnd = WINDOW.get_top_window();
             this.state = WINDOW_STATE_MINIMIZED;
@@ -1909,17 +2159,143 @@ class WINDOW {
                 this.#onminimize(this);
             }
         }, 250);
+        return true;
     }
 
-    minimize_to( x, y ) {
-        this.minimize_information.ignore_due_to_drag = true;
+    set_window_pos( x, y, redraw_if_req = true ) {
+        if (typeof x !== 'number' ||
+            typeof y !== 'number')
+        {
+            return;
+        }
 
+        this.restore_position.top = y;
+        this.restore_position.left = x;
+
+        if (this.state === WINDOW_STATE_NORMAL &&
+            redraw_if_req === true)
+        {
+            /* Move the minimized window */
+            let crect = this.window.getBoundingClientRect();
+
+            this.window.style.transition    = "all 250ms linear";
+            this.window.style.left          = crect.left + "px";
+            this.window.style.top           = crect.top + "px";
+            setTimeout(()=>{
+                this.window.style.left              = x.toString() + "px";
+                this.window.style.top               = y.toString() + "px";
+            }, 50);
+            setTimeout(()=>{
+                this.window.style.transition    = "none";
+            }, 250);
+        }
+
+
+    }
+
+    set_minimize_pos( x, y, redraw_if_req = true ) {
+
+        if (this.#management_state === WM_STATE_MANAGED) {
+            this.set_management_state(WM_STATE_UNMANAGED);
+        }
+
+        if (typeof x !== 'number' ||
+            typeof y !== 'number')
+        {
+            return;
+        }
+
+        this.minimize_information.x = x;
+        this.minimize_information.y = y;
+
+        if (this.state === WINDOW_STATE_MINIMIZED &&
+            redraw_if_req === true)
+        {
+            /* Move the minimized window */
+            let crect = this.window.getBoundingClientRect();
+
+            this.window.style.transition    = "all 250ms linear";
+            this.window.style.left          = crect.left + "px";
+            this.window.style.top           = crect.top + "px";
+            setTimeout(()=>{
+                this.window.style.left              = this.minimize_information.x.toString() + "px";
+                this.window.style.top               = this.minimize_information.y.toString() + "px";
+            }, 50);
+            setTimeout(()=>{
+                this.window.style.transition    = "none";
+            }, 250);
+        }
+    }
+
+    #restore_unmanaged() {
+        return new Promise( (resolve, reject)=>{
+            if (this.state === WINDOW_STATE_INVALID ||
+                this.state !== WINDOW_STATE_MINIMIZED)
+            {
+                reject("Window is not minimized");
+                return;
+            }
+            this.window.style.resize        = "both";
+            this.window.style.transition    = "all 250ms linear";
+            this.window.style.zIndex = WINDOW.#base_index + WINDOW.count;
+            setTimeout(()=>{
+                this.close_button.style.display     = "table-cell";
+                this.minimize_button.style.display  = "table-cell";
+                this.#minimized_content.style.display
+                                                    = "none";
+
+                /**
+                 * If restoring the window puts some of it off-screen,
+                 * restore it to be visible.
+                 */
+
+                let wwidth  = window.innerWidth;
+                let wheight = window.innerHeight;
+                let x       = 0;
+                let y       = 0;
+
+
+                if ( this.restore_position.left + this.restore_position.width > wwidth ) {
+                    if ( (x = (wwidth - this.restore_position.width)) < 0 ) {
+                        x = 0;
+                    }
+                } else {
+                    x = this.restore_position.left;
+                }
+
+                if ( this.restore_position.top + this.restore_position.height > wheight ) {
+                    if ( (y = (wheight - this.restore_position.height)) < 0 ) {
+                        y = 0;
+                    }
+                } else {
+                    y = this.restore_position.top;
+                }
+                this.window.style.width             = this.restore_position.width + "px";
+                this.window.style.height            = this.restore_position.height + "px";
+                this.window.style.top               = y.toString() + "px";
+                this.window.style.left              = x.toString() + "px";
+            }, 50);
+            setTimeout(()=>{
+                this.#content.style.display     = "block";
+                this.window.style.transition    = "none";
+                this.state                      = WINDOW_STATE_NORMAL;
+                WINDOW.set_focus(this);
+                if (this.#onrestore) {
+                    this.#onrestore(this);
+                }
+                resolve(this);
+            }, 250);
+        });        
     }
 
     /**
      * function restore();
      */
     restore() {
+        if (this.#management_state === WM_STATE_UNMANAGED) {
+            return this.#restore_unmanaged();
+        }
+
         return new Promise( (resolve, reject)=>{
             if (this.state === WINDOW_STATE_INVALID ||
                 this.state !== WINDOW_STATE_MINIMIZED)
@@ -2150,11 +2526,11 @@ class WINDOW {
         let tb_rect = this.title_bar.getBoundingClientRect();
         let wwidth  = window.innerWidth;
         let wheight = window.innerHeight;
-
+       
         if (this.state !== WINDOW_STATE_NORMAL &&
             this.state !== WINDOW_STATE_MINIMIZED)
         {
-            return;
+            return this;
         }
 
         /* Width of title bar is         window width - ( (Width of control buttons   + The ICON's width))                  
@@ -2164,12 +2540,7 @@ class WINDOW {
 
         this.#minimized_content.style.height = (pos.height - tb_rect.height).toString() + "px";
 
-        // Commented this trying to get sizing to work
-        // this.#content.style.height = (pos.height - tb_rect.height).toString() + "px";
-
         this.#minimized_content.style.top = (tb_rect.height) + "px";
-
-        // this.#content.style.top = (tb_rect.height) + "px";
 
         if (this.#content_size_relative === false) {
             this.#content.style.top = (tb_rect.height) + "px";
@@ -2191,18 +2562,10 @@ class WINDOW {
         this.content_width  = pos.width;
         this.content_height = pos.height - tb_rect.height;
 
-        /********************************************************************************
-         * Do not resize the SVG.  It will resize itself.
-         */
-        // if (this.#content_size_relative) {
-        //     this.svg.viewBox.baseVal.width = this.content_width;
-        //     this.svg.viewBox.baseVal.height = this.content_height;
-        // }
-        /*******************************************************************************/
-
         if (this.#onresize) {
             this.#onresize(this);
         }
+        return this;
     }
 
     #calc( u ) {
@@ -2344,6 +2707,7 @@ class WINDOW {
 
     constructor( x, y, cx, cy, title ) 
     {
+        WINDOW.init();
         let wwidth  = window.innerWidth;
         let wheight = window.innerHeight;
         let icx     = 0;
@@ -2357,6 +2721,15 @@ class WINDOW {
         this.center_x = false;
 
         this.custom_button_list     = [];
+
+        this.restore_position = {
+            top:    0,
+            left:   0,
+            width:  0,
+            height: 0,
+            x:      0,
+            y:      0
+        };
 
         if (typeof cx === 'number') {
             icx = cx;
@@ -2490,12 +2863,14 @@ class WINDOW {
         this.title_bar_text                 = this.title_bar.querySelector("div._window_ttext_");
 
         this.title_bar.onmousedown          = (e)=>{
-            this.dragX                  = e.clientX;
-            this.dragY                  = e.clientY;
-            this.position               = this.window.getBoundingClientRect();
-            this.left                   = this.position.left;
-            this.top                    = this.position.top;
-            this.window_being_dragged   = true;
+            if ( this.#draggable === true ) {
+                this.dragX                  = e.clientX;
+                this.dragY                  = e.clientY;
+                this.position               = this.window.getBoundingClientRect();
+                this.left                   = this.position.left;
+                this.top                    = this.position.top;
+                this.window_being_dragged   = true;
+            }
         };
 
         this.title_bar_text.style.marginLeft
@@ -2620,7 +2995,9 @@ class WINDOW {
         };
 
         this.window.addEventListener("mousedown", (e)=>{
-            if (this.state === WINDOW_STATE_NORMAL) {
+            if (this.state === WINDOW_STATE_NORMAL ||
+                this.get_management_state() === WM_STATE_UNMANAGED)
+            {
                 WINDOW.set_focus(this);
             }
         });
@@ -2631,15 +3008,8 @@ class WINDOW {
             }
         });
 
-        // this.#contents_auto_resize           = false;
-
-        // this.#content_holder                = document.createElement("div");
-        // this.#content_holder.innerHTML      = _window_content_;
-        // this.#content                       = this.#content_holder.querySelector("div._scale_content_");
-
         this.content_width                   = icx;
         this.content_height                  = icy;
-
 
         this.#content                        = document.createElement("div");
         this.#content.style.overflowX        = "hidden";
@@ -2688,7 +3058,6 @@ class WINDOW {
         this.title_bar_text.innerText       = title;
         this.#size();
 
-
         this.#resize_obs = new ResizeObserver((entries)=>{ 
             if (entries.length === 0) return;
             let entry = entries[0];
@@ -2708,7 +3077,6 @@ class WINDOW {
         }).observe(this.window);
 
         WINDOW.add(this);
-        
     }
 }
 
