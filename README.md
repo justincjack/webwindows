@@ -1,6 +1,8 @@
 # webwindows
 JavaScript desktop window management system.
 
+[Working example click here](https://justinjack.com/windows.html)
+
 ***Would like contributors for the betterment of Web Applications! ( Names in credits, yay!) I'm actively using, building, and maintaining this in several large-scale projects, but obviously can't cover as much ground alone as I could with help.  If you're interested in using this system and helping make it phenomenal, please dive in!***
 
 A desktop window manager for windowed web applications.
@@ -71,4 +73,7 @@ Significant documentation will be coming soon.
 
 - Double click a minimized/docked window to restore it.
 - Drag a docked window to "unmanage" it.  That means it will minimize/restore where it is dropped.
+- Windows may be set with no resize thumb in the lower-right-hand corner
+- Set the "draggable" property to false if the window should not be draggable.
+- Geez, I could go on forever.. I'll stop here for now.
 
